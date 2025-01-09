@@ -6,8 +6,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "supersecretkey"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 24
+    port: int
 
     class Config:
         env_file = ".env"
+        extra = "allow"
 
 settings = Settings()

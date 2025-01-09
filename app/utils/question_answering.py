@@ -1,9 +1,11 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering
 
-model_path = "final"
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModelForQuestionAnswering.from_pretrained(model_path)
+model_identifier = "urahara119/qazaqai"  # Replace with your actual model identifier
+
+# Load model and tokenizer from Hugging Face
+tokenizer = AutoTokenizer.from_pretrained(model_identifier)
+model = AutoModelForQuestionAnswering.from_pretrained(model_identifier)
 model.eval()
 
 def get_model_answer(question: str, context: str):
