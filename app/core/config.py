@@ -1,5 +1,5 @@
 import os
-from pydantic_settings import BaseSettings
+from pydantic import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:CTVkFKPwcMuRwNoknMlnYuToVORDaCsS@postgres.railway.internal:5432/railway"
