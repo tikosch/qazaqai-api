@@ -9,8 +9,8 @@ from app.schemas.profile import (
     StudentDetails,
     TeacherDetails,
     TestResultInProfile,
-    CommentRequest,
-    ModelTestResultInProfile
+    ModelTestResultInProfile,   # ← import for model-test schema
+    CommentRequest
 )
 from app.core.security import decode_token
 from app.models.student_comment import StudentComment
@@ -18,7 +18,7 @@ from app.models.teacher_referral import TeacherReferral
 from app.models.teacher_student import TeacherStudents
 from app.models.user import User
 from app.models.testres import TestResult
-from app.models.model_test_results import ModelTestResult
+from app.models.model_test_results import ModelTestResult   # ← import for ORM
 from app.crud.student_comment import add_comment
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
@@ -34,10 +34,6 @@ def get_current_user(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ):
-    """
-    Decode the JWT, fetch the User from the DB, and return (user, payload).
-    Raises 401 if token is invalid or user not found.
-    """
     try:
         payload = decode_token(token)
         user_id: str = payload.get("UserId")
@@ -58,35 +54,19 @@ def get_profile(
     db: Session = Depends(get_db),
     current_user_and_payload=Depends(get_current_user)
 ):
-    """
-    If the current user is a Teacher:
-      - Fetch referral code
-      - Fetch all TeacherStudents rows for this teacher
-      - For each student, eagerly load test_results and package into TestResultInProfile
-      - Also fetch any StudentComment rows (serialize to List[str])
-      - Return TeacherProfileDetails including Students: List[StudentDetails]
-
-    If the current user is a Student:
-      - Fetch that student’s TestResult rows (serialize into TestResultInProfile)
-      - Fetch ModelTestResult rows (serialize into ModelTestResultInProfile)
-      - Fetch any StudentComment rows (serialize to List[str])
-      - Return StudentProfileDetails
-
-    Otherwise, raise 403.
-    """
     user, payload = current_user_and_payload
     roles = payload.get("roles", [])
     user_id = user.id
 
     if SYSTEM_ROLES_TEACHER in roles:
-        # 1) Fetch referral code (if any)
+        # Fetch this teacher’s referral code
         referral = (
             db.query(TeacherReferral)
             .filter(TeacherReferral.teacher_id == user_id)
             .first()
         )
 
-        # 2) Find all students linked to this teacher
+        # Find all (teacher → student) relationships
         teacher_students = (
             db.query(TeacherStudents)
             .filter(TeacherStudents.teacher_id == user_id)
@@ -97,7 +77,7 @@ def get_profile(
 
         students: list[StudentDetails] = []
         if student_ids:
-            # 3) Eagerly load each User.test_results
+            # Eagerly load each student’s test_results
             q = (
                 db.query(User)
                 .options(joinedload(User.test_results))
@@ -106,7 +86,7 @@ def get_profile(
             )
 
             for s in q:
-                # 4) Serialize comments on this student
+                # 1) Fetch/serialize any comments on this student
                 comments = (
                     db.query(StudentComment)
                     .filter(StudentComment.student_id == s.id)
@@ -114,7 +94,7 @@ def get_profile(
                 )
                 serialized_comments = [c.comment for c in comments]
 
-                # 5) Build TestResultInProfile list for this student
+                # 2) Build TestResultInProfile list for this student
                 test_results_in_profile = [
                     TestResultInProfile(
                         testName=tr.testName,
@@ -127,13 +107,29 @@ def get_profile(
                     for tr in s.test_results
                 ]
 
-                # 6) Append StudentDetails (including TestResults and Comments)
+                # 3) ***NEW*** Fetch/serialize each student’s ModelTestResult rows
+                model_test_results = (
+                    db.query(ModelTestResult)
+                    .filter(ModelTestResult.student_id == s.id)
+                    .all()
+                )
+                serialized_model_test_results = [
+                    ModelTestResultInProfile(
+                        question=m.question,
+                        user_answer=m.user_answer,
+                        similarity_score=m.similarity_score
+                    )
+                    for m in model_test_results
+                ]
+
+                # 4) Append StudentDetails (including TestResults, Comments, ModelTestResults)
                 students.append(
                     StudentDetails(
                         StudentId=str(s.id),
                         StudentName=s.username,
                         TestResults=test_results_in_profile,
-                        Comments=serialized_comments
+                        Comments=serialized_comments,
+                        ModelTestResults=serialized_model_test_results   # ← include here
                     )
                 )
 
@@ -149,19 +145,14 @@ def get_profile(
         )
 
     elif SYSTEM_ROLES_STUDENT in roles:
-        # 1) Verify that this student is linked to a teacher
+        # (Unchanged) Student’s own view
         teacher_student = (
             db.query(TeacherStudents)
             .filter(TeacherStudents.student_id == user_id)
             .first()
         )
         if not teacher_student:
-            raise HTTPException(
-                status_code=404,
-                detail="Student-Teacher relationship not found."
-            )
-
-        # 2) Fetch the teacher’s User record
+            raise HTTPException(status_code=404, detail="Student-Teacher relationship not found.")
         teacher = (
             db.query(User)
             .filter(User.id == teacher_student.teacher_id)
@@ -170,7 +161,7 @@ def get_profile(
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher not found.")
 
-        # 3) Fetch this student’s TestResult rows
+        # Fetch test results for the current student
         test_results = (
             db.query(TestResult)
             .filter(TestResult.student_id == user_id)
@@ -178,23 +169,23 @@ def get_profile(
         )
         serialized_results = [
             TestResultInProfile(
-                testName=tr.testName,
-                testTopic=tr.testTopic,
-                totalQuestions=tr.totalQuestions,
-                rightAnswersCount=tr.rightAnswersCount,
-                wrongAnswersCount=tr.wrongAnswersCount,
-                subTopics=tr.subTopics
+                testName=result.testName,
+                testTopic=result.testTopic,
+                totalQuestions=result.totalQuestions,
+                rightAnswersCount=result.rightAnswersCount,
+                wrongAnswersCount=result.wrongAnswersCount,
+                subTopics=result.subTopics
             )
-            for tr in test_results
+            for result in test_results
         ]
 
-        # 4) Fetch ModelTestResult rows
+        # Fetch model‐generated test results
         model_test_results = (
             db.query(ModelTestResult)
             .filter(ModelTestResult.student_id == user_id)
             .all()
         )
-        serialized_model_test_results: list[ModelTestResultInProfile] = [
+        serialized_model_test_results = [
             ModelTestResultInProfile(
                 question=m.question,
                 user_answer=m.user_answer,
@@ -203,7 +194,7 @@ def get_profile(
             for m in model_test_results
         ]
 
-        # 5) Fetch any comments left by the teacher on this student
+        # Fetch comments from the teacher for the student
         comments = (
             db.query(StudentComment)
             .filter(StudentComment.student_id == user_id)
@@ -236,13 +227,8 @@ def add_student_comment(
     db: Session = Depends(get_db),
     current_user_and_payload=Depends(get_current_user)
 ):
-    """
-    Only teachers can call this endpoint. It inserts a new StudentComment,
-    linking the teacher to the given student_id with the provided comment text.
-    """
     user, payload = current_user_and_payload
     roles = payload.get("roles", [])
-
     if SYSTEM_ROLES_TEACHER not in roles:
         raise HTTPException(status_code=403, detail="Only teachers can add comments.")
 

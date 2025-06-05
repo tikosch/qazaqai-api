@@ -12,11 +12,25 @@ class TestResultInProfile(BaseModel):
     class Config:
         orm_mode = True
 
+
+class ModelTestResultInProfile(BaseModel):
+    question: str
+    user_answer: str
+    similarity_score: float
+
+    class Config:
+        orm_mode = True
+
 class StudentDetails(BaseModel):
     StudentId: str
     StudentName: str
     TestResults: List[TestResultInProfile]
     Comments: List[str]
+    ModelTestResults: List[ModelTestResultInProfile]
+
+    class Config:
+        orm_mode = True
+
 
 class TeacherDetails(BaseModel):
     TeacherId: str
@@ -32,14 +46,6 @@ class TeacherProfileDetails(BaseModel):
     ReferralCode: Optional[str]
     Students: Optional[List[StudentDetails]] = None
     
-    class Config:
-        orm_mode = True
-
-class ModelTestResultInProfile(BaseModel):
-    question: str
-    user_answer: str
-    similarity_score: float
-
     class Config:
         orm_mode = True
 
